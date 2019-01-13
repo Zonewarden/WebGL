@@ -1,9 +1,10 @@
-const LoopMode = {
-  once: THREE.LoopOnce,
-  repeat: THREE.LoopRepeat,
-  pingpong: THREE.LoopPingPong
-};
+(function e(t,n,r){function s(o,u){if(!n[o]){if(!t[o]){var a=typeof require=="function"&&require;if(!u&&a)return a(o,!0);if(i)return i(o,!0);var f=new Error("Cannot find module '"+o+"'");throw f.code="MODULE_NOT_FOUND",f}var l=n[o]={exports:{}};t[o][0].call(l.exports,function(e){var n=t[o][1][e];return s(n?n:e)},l,l.exports,e,t,n,r)}return n[o].exports}var i=typeof require=="function"&&require;for(var o=0;o<r.length;o++)s(r[o]);return s})({1:[function(require,module,exports){
 
+  AFRAME.registerComponent(
+    'animation-mixer',
+    require('./tmp/aframe-extras.animation-mixer/index.js')
+  );
+},{"./tmp/aframe-extras.animation-mixer/index.js":2}],2:[function(require,module,exports){
 /**
  * animation-mixer
  *
@@ -11,15 +12,10 @@ const LoopMode = {
  * skeletal or morph animations through THREE.AnimationMixer.
  * See: https://threejs.org/docs/?q=animation#Reference/Animation/AnimationMixer
  */
-module.exports = AFRAME.registerComponent('animation-mixer', {
+module.exports = {
   schema: {
     clip:  {default: '*'},
-    duration: {default: 0},
-    clampWhenFinished: {default: false, type: 'boolean'},
-    crossFadeDuration: {default: 0},
-    loop: {default: 'repeat', oneOf: Object.keys(LoopMode)},
-    repetitions: {default: Infinity, min: 0},
-    timeScale: {default: 1}
+    duration: {default: 0}
   },
 
   init: function () {
@@ -30,27 +26,20 @@ module.exports = AFRAME.registerComponent('animation-mixer', {
     /** @type {Array<THREE.AnimationAction>} */
     this.activeActions = [];
 
-    const model = this.el.getObject3D('mesh');
+    var model = this.el.getObject3D('mesh');
 
     if (model) {
       this.load(model);
     } else {
-      this.el.addEventListener('model-loaded', (e) => {
+      this.el.addEventListener('model-loaded', function(e) {
         this.load(e.detail.model);
-      });
+      }.bind(this));
     }
   },
 
   load: function (model) {
-    const el = this.el;
     this.model = model;
     this.mixer = new THREE.AnimationMixer(model);
-    this.mixer.addEventListener('loop', (e) => {
-      el.emit('animation-loop', {action: e.action, loopDelta: e.loopDelta});
-    });
-    this.mixer.addEventListener('finished', (e) => {
-      el.emit('animation-finished', {action: e.action, direction: e.direction});
-    });
     if (this.data.clip) this.update({});
   },
 
@@ -58,68 +47,41 @@ module.exports = AFRAME.registerComponent('animation-mixer', {
     if (this.mixer) this.mixer.stopAllAction();
   },
 
-  update: function (prevData) {
-    if (!prevData) return;
+  update: function (previousData) {
+    if (!previousData) return;
 
-    const data = this.data;
-    const changes = AFRAME.utils.diff(data, prevData);
+    var data = this.data,
+        activeActions = this.activeActions;
 
-    // If selected clips have changed, restart animation.
-    if ('clip' in changes) {
-      this.stopAction();
-      if (data.clip) this.playAction();
-      return;
+    if (data.clip !== previousData.clip) {
+      if (activeActions.length) this.mixer.stopAllAction();
+      if (data.clip) this.playClip(data.clip);
     }
 
-    // Otherwise, modify running actions.
-    this.activeActions.forEach((action) => {
-      if ('duration' in changes && data.duration) {
+    if (!activeActions.length) return;
+
+    if (data.duration) {
+      for (var action, i = 0; (action = activeActions[i]); i++) {
         action.setDuration(data.duration);
       }
-      if ('clampWhenFinished' in changes) {
-        action.clampWhenFinished = data.clampWhenFinished;
-      }
-      if ('loop' in changes || 'repetitions' in changes) {
-        action.setLoop(LoopMode[data.loop], data.repetitions);
-      }
-      if ('timeScale' in changes) {
-        action.setEffectiveTimeScale(data.timeScale);
-      }
-    });
-  },
-
-  stopAction: function () {
-    const data = this.data;
-    for (let i = 0; i < this.activeActions.length; i++) {
-      data.crossFadeDuration
-        ? this.activeActions[i].fadeOut(data.crossFadeDuration)
-        : this.activeActions[i].stop();
     }
-    this.activeActions.length = 0;
   },
 
-  playAction: function () {
+  playClip: function (clipName) {
     if (!this.mixer) return;
 
-    const model = this.model,
-        data = this.data,
+    var model = this.model,
         clips = model.animations || (model.geometry || {}).animations || [];
 
     if (!clips.length) return;
 
-    const re = wildcardToRegExp(data.clip);
+    var re = wildcardToRegExp(clipName);
 
-    for (let clip, i = 0; (clip = clips[i]); i++) {
+    this.activeActions.length = 0;
+    for (var clip, action, i = 0; (clip = clips[i]); i++) {
       if (clip.name.match(re)) {
-        const action = this.mixer.clipAction(clip, model);
-        action.enabled = true;
-        action.clampWhenFinished = data.clampWhenFinished;
-        if (data.duration) action.setDuration(data.duration);
-        if (data.timeScale !== 1) action.setEffectiveTimeScale(data.timeScale);
-        action
-          .setLoop(LoopMode[data.loop], data.repetitions)
-          .fadeIn(data.crossFadeDuration)
-          .play();
+        action = this.mixer.clipAction(clip, model);
+        action.play();
         this.activeActions.push(action);
       }
     }
@@ -128,7 +90,7 @@ module.exports = AFRAME.registerComponent('animation-mixer', {
   tick: function (t, dt) {
     if (this.mixer && !isNaN(dt)) this.mixer.update(dt / 1000);
   }
-});
+};
 
 /**
  * Creates a RegExp from the given string, converting asterisks to .* expressions,
@@ -144,3 +106,5 @@ function wildcardToRegExp (s) {
 function regExpEscape (s) {
   return s.replace(/[|\\{}()[\]^$+*?.]/g, '\\$&');
 }
+
+},{}]},{},[1]);
